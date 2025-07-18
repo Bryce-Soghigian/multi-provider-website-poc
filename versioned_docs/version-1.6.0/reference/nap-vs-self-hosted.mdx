@@ -1,0 +1,325 @@
+---
+title: "NAP vs Self-hosted"
+sidebar_position: 1
+description: Choose between Node Auto Provisioning (NAP) and self-hosted Karpenter on Azure
+---
+
+Karpenter for Azure offers two deployment options: **Node Auto Provisioning (NAP)** managed by Microsoft, and **self-hosted** deployment. This guide helps you understand the differences and choose the right option for your use case.
+
+## Node Auto Provisioning (NAP) - Recommended
+
+NAP is Microsoft's managed implementation of Karpenter, fully integrated into AKS. Microsoft handles the installation, updates, and maintenance of Karpenter components.
+
+### ✅ Advantages
+
+- **Fully Managed**: Microsoft handles all Karpenter lifecycle management
+- **Integrated Experience**: Native AKS integration with Azure portal support
+- **Automatic Updates**: Security patches and feature updates handled automatically
+- **Support**: Included in Microsoft Azure support plans
+- **Simplified Setup**: Enable with a single CLI command or portal setting
+- **Cost Optimized**: No additional management overhead
+
+### ❌ Limitations
+
+- **Less Customization**: Limited ability to customize Karpenter configuration
+- **Update Timing**: Updates follow Microsoft's release schedule
+- **Feature Lag**: New Karpenter features may take time to be available in NAP
+- **AKS Only**: Only available on AKS, not self-managed Kubernetes clusters
+
+### When to Choose NAP
+
+- You're using AKS and want minimal operational overhead
+- You prefer managed services over self-managed components
+- You don't need extensive customization of Karpenter
+- You want Microsoft support for the entire stack
+- You're getting started with Karpenter
+
+## Self-hosted Karpenter
+
+Self-hosted Karpenter gives you full control over the Karpenter installation and configuration. You manage the deployment, updates, and configuration yourself.
+
+### ✅ Advantages
+
+- **Full Control**: Complete customization of Karpenter configuration
+- **Latest Features**: Access to newest Karpenter releases immediately
+- **Flexibility**: Works with self-managed Kubernetes clusters
+- **Custom Integrations**: Ability to integrate with custom monitoring and logging
+- **Advanced Configuration**: Access to all Karpenter settings and features
+
+### ❌ Limitations
+
+- **Operational Overhead**: You manage installation, updates, and maintenance
+- **Complexity**: Requires deeper Kubernetes and Karpenter knowledge
+- **Support**: Community support only (unless you have commercial support)
+- **Update Management**: Manual updates required for security patches
+
+### When to Choose Self-hosted
+
+- You need specific Karpenter configurations not available in NAP
+- You're running on self-managed Kubernetes clusters
+- You want immediate access to the latest Karpenter features
+- You have the expertise to manage Karpenter operationally
+- You need custom integrations or modifications
+
+## Feature Comparison
+
+| Feature | NAP | Self-hosted |
+|---------|-----|-------------|
+| **Management** | Microsoft managed | User managed |
+| **Setup Complexity** | Simple (single command) | Moderate (Helm/manifests) |
+| **Updates** | Automatic | Manual |
+| **Customization** | Limited | Full |
+| **Latest Features** | Delayed | Immediate |
+| **Support** | Microsoft | Community |
+| **Cost** | No additional cost | Operational overhead |
+| **AKS Integration** | Native | Manual setup |
+| **Custom NodeClasses** | Limited options | Full flexibility |
+| **Monitoring** | Azure Monitor integration | Custom setup required |
+
+## Getting Started with NAP
+
+### Prerequisites
+
+- Azure subscription
+- Azure CLI or Azure portal access
+- AKS cluster (can be existing or new)
+
+### Enable NAP on New Cluster
+
+```bash
+# Create cluster with NAP enabled
+az aks create \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --enable-node-autoprovision \
+  --node-count 1 \
+  --generate-ssh-keys
+```
+
+### Enable NAP on Existing Cluster
+
+```bash
+# Enable NAP on existing cluster
+az aks update \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --enable-node-autoprovision
+```
+
+### Verify NAP Installation
+
+```bash
+# Check if NAP is enabled
+az aks show --resource-group myResourceGroup --name myAKSCluster --query "autoUpgradeProfile.nodeOSUpgradeChannel"
+
+# Verify NodePools are working
+kubectl get nodepool
+```
+
+## Getting Started with Self-hosted
+
+### Prerequisites
+
+- Kubernetes cluster (AKS or self-managed)
+- Helm 3.x installed
+- kubectl access to cluster
+- Azure credentials configured
+
+### Install Karpenter
+
+```bash
+# Add Karpenter Helm repository
+helm repo add karpenter-azure https://azure.github.io/karpenter-provider-azure
+helm repo update
+
+# Create namespace
+kubectl create namespace karpenter
+
+# Install Karpenter
+helm install karpenter karpenter-azure/karpenter \
+  --namespace karpenter \
+  --set controller.clusterName=myCluster \
+  --set controller.image.tag=latest
+```
+
+### Create NodeClass and NodePool
+
+```yaml
+# AKSNodeClass
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: default
+spec:
+  imageFamily: Ubuntu2204
+  tags:
+    managed-by: karpenter
+---
+# NodePool
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: default
+      requirements:
+      - key: kubernetes.io/arch
+        operator: In
+        values: ["amd64"]
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+```
+
+## Migration Between Options
+
+### NAP to Self-hosted
+
+If you need more control and want to migrate from NAP to self-hosted:
+
+1. **Disable NAP** on your cluster
+2. **Install self-hosted Karpenter** using Helm
+3. **Migrate configurations** to custom NodeClasses and NodePools
+4. **Test thoroughly** before removing NAP nodes
+
+```bash
+# Disable NAP
+az aks update \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --disable-node-autoprovision
+
+# Install self-hosted Karpenter
+# (follow self-hosted installation steps above)
+```
+
+### Self-hosted to NAP
+
+If you want to reduce operational overhead:
+
+1. **Remove self-hosted Karpenter** installation
+2. **Enable NAP** on your cluster
+3. **Migrate workloads** to NAP-managed nodes
+4. **Remove custom NodeClasses** and use NAP defaults
+
+```bash
+# Remove self-hosted Karpenter
+helm uninstall karpenter -n karpenter
+kubectl delete namespace karpenter
+
+# Enable NAP
+az aks update \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --enable-node-autoprovision
+```
+
+## Monitoring and Observability
+
+### NAP Monitoring
+
+NAP integrates with Azure Monitor and provides:
+
+- **Azure Monitor Insights**: Built-in dashboards and metrics
+- **Azure Alerts**: Preconfigured alerting rules
+- **Cost Analysis**: Integration with Azure Cost Management
+- **Activity Logs**: Automatic logging of provisioning activities
+
+```bash
+# Enable Azure Monitor for containers
+az aks enable-addons \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --addons monitoring
+```
+
+### Self-hosted Monitoring
+
+For self-hosted Karpenter, you need to set up monitoring:
+
+```yaml
+# Prometheus ServiceMonitor for Karpenter
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karpenter
+  namespace: karpenter
+spec:
+  endpoints:
+  - port: http-metrics
+    path: /metrics
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: karpenter
+```
+
+## Decision Matrix
+
+Choose **NAP** if:
+- ✅ You want minimal operational overhead
+- ✅ You're primarily using standard configurations
+- ✅ You prefer Microsoft-managed solutions
+- ✅ You're new to Karpenter
+- ✅ You want integrated Azure support
+
+Choose **Self-hosted** if:
+- ✅ You need advanced Karpenter configurations
+- ✅ You want immediate access to new features
+- ✅ You're running on non-AKS clusters
+- ✅ You have operational expertise
+- ✅ You need custom integrations
+
+## Best Practices
+
+### For NAP Users
+
+1. **Monitor Azure Service Health** for NAP updates and issues
+2. **Use Azure Policy** to enforce governance across NodePools
+3. **Leverage Azure RBAC** for access control
+4. **Monitor costs** using Azure Cost Management
+5. **Test workload compatibility** before enabling NAP
+
+### For Self-hosted Users
+
+1. **Implement proper monitoring** and alerting
+2. **Plan update schedules** for Karpenter versions
+3. **Test updates** in non-production environments first
+4. **Document your configuration** for team knowledge sharing
+5. **Have rollback procedures** for failed updates
+6. **Monitor upstream releases** for security patches
+
+## Troubleshooting
+
+### NAP Issues
+
+```bash
+# Check NAP status
+az aks show --resource-group myRG --name myCluster --query "autoUpgradeProfile"
+
+# View NAP events
+kubectl get events --sort-by='.lastTimestamp' | grep -i autoprovision
+
+# Check node provisioning logs
+az aks get-credentials --resource-group myRG --name myCluster
+kubectl logs -n kube-system -l app=cluster-autoscaler
+```
+
+### Self-hosted Issues
+
+```bash
+# Check Karpenter pod status
+kubectl get pods -n karpenter
+
+# View Karpenter logs
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter
+
+# Check NodePool status
+kubectl get nodepool -o wide
+
+# View node provisioning events
+kubectl get events --field-selector reason=ProvisioningSucceeded
+```

@@ -1,0 +1,62 @@
+{
+  "tutorialSidebar": [
+    {
+      "type": "doc",
+      "id": "intro",
+      "label": "Introduction"
+    },
+    {
+      "type": "category",
+      "label": "Getting Started",
+      "items": [
+        "getting-started/quickstart"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Concepts",
+      "items": [
+        "concepts/nodepools",
+        "concepts/nodeclasses",
+        "concepts/scheduling",
+        "concepts/disruption"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Reference",
+      "items": [
+        "reference/settings",
+        {
+          "type": "doc",
+          "id": "reference/nap-vs-self-hosted",
+          "label": "NAP vs Self-hosted",
+          "className": "sidebar-azure-only"
+        },
+        {
+          "type": "doc",
+          "id": "reference/custom-networking",
+          "label": "Custom Networking",
+          "className": "sidebar-azure-only"
+        },
+        {
+          "type": "doc",
+          "id": "reference/instance-types",
+          "label": "Instance Types"
+        },
+        {
+          "type": "doc",
+          "id": "reference/managing-amis",
+          "label": "Managing AMIs",
+          "className": "sidebar-aws-only"
+        },
+        {
+          "type": "doc",
+          "id": "reference/upgrade-guide",
+          "label": "Upgrade Guide",
+          "className": "sidebar-aws-only"
+        }
+      ]
+    }
+  ]
+}

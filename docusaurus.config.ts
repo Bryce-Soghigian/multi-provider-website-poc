@@ -84,6 +84,14 @@ const config: Config = {
           // Remove this to remove the "edit this page" links.
           editUrl:
             'https://github.com/Azure/karpenter-provider-azure/tree/main/website-v2/',
+          // Versioning configuration
+          lastVersion: 'current',
+          versions: {
+            current: {
+              label: 'v1.6.0',
+              path: '',
+            },
+          },
         },
         blog: {
           showReadingTime: true,
@@ -126,6 +134,11 @@ const config: Config = {
           sidebarId: 'tutorialSidebar',
           position: 'right',
           label: 'Docs',
+        },
+        {
+          type: 'docsVersionDropdown',
+          position: 'right',
+          dropdownActiveClassDisabled: true,
         },
         {
           href: 'https://github.com/Azure/karpenter-provider-azure',

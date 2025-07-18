@@ -1,0 +1,271 @@
+---
+title: "Managing AMIs"
+sidebar_position: 1
+description: Task for managing AMIs in Karpenter
+---
+
+:::warning Important
+Karpenter **heavily recommends against** opting-in to use an `amiSelectorTerm` with `@latest` unless you are doing this in a pre-production environment or are willing to accept the risk that a faulty AMI may cause downtime in your production clusters. In general, if using a publicly released version of a well-known AMI type (like AL2, AL2023, or Bottlerocket), we recommend that you pin to a version of that AMI and deploy newer versions of that AMI type in a staged approach when newer patch versions are available.
+
+```yaml
+amiSelectorTerms:
+  - alias: al2023@v20240807
+```
+
+More details are described in [Controlling AMI Replacement](#controlling-ami-replacement) below.
+:::
+
+Understanding how Karpenter assigns AMIs to nodes can help ensure that your workloads will run successfully on those nodes and continue to run if the nodes are upgraded to newer AMIs. Below we describe how Karpenter assigns AMIs to nodes when they are first deployed and how newer AMIs are assigned later when nodes are spun up to replace old ones. Later, it describes the options you have to assert control over how AMIs are used by Karpenter for your clusters.
+
+Features for managing AMIs described here should be considered as part of the larger upgrade policies that you have for your clusters. See [How do I upgrade an EKS Cluster with Karpenter](../../faq#how-do-i-upgrade-an-eks-cluster-with-karpenter) for details on this process.
+
+## How Karpenter assigns AMIs to nodes
+
+Here is how Karpenter assigns AMIs nodes:
+
+* When you create an `EC2NodeClass`, you are required to specify [`amiSelectorTerms`](../../concepts/nodeclasses#specamiselectorterms). [`amiSelectorTerms`](../../concepts/nodeclasses#specamiselectorterms) allow you to select on AMIs that can be spun-up by this EC2NodeClass based on tags, id, name, or an alias. Multiple AMIs may be specified, and Karpenter will choose the newest compatible AMI when spinning up new nodes.
+* Some `amiSelectorTerm` types are static and always resolve to the same AMI (e.g. `id`). However, some are dynamic and may resolve to different AMIs over time. Examples of dynamic types include `alias`, `tags`, and `name` (when using a wildcard). For example, if you specify an `amiSelectorTerm` with an `alias` set to `@latest` (e.g. `al2023@latest`, `al2@latest`, or `bottlerocket@latest`), Karpenter will use the _latest_ release for that AMI type when spinning up a new node.
+* When a node is replaced, Karpenter checks to see if a newer AMI is available based on your `amiSelectorTerms`. If a newer AMI is available, Karpenter will automatically use the new AMI to spin up the new node. **In particular, if you are using a dynamic `amiSelectorTerm` type, you may get a new AMI deployed to your environment without having properly tested it.**
+
+Whenever a node is replaced, the replacement node will be launched using the newest AMI based on your `amiSelectorTerms`. Nodes may be replaced due to manual deletion, or any of Karpenter's automated methods:
+- [**Expiration**](../../concepts/disruption#expiration): Automatically initiates replacement at a certain time after the node is created.
+-  [**Consolidation**](../../concepts/disruption#consolidation): If Karpenter detects that a cheaper node can be used to run the same workloads, Karpenter may replace the current node automatically.
+- [**Drift**](../../concepts/disruption#drift): If a node's state no longer matches the desired state dictated by the `NodePool` or `EC2NodeClass`, it will be replaced, including if the node's AMI no longer matches the latest AMI selected by the `amiSelectorTerms`.
+- [**Interruption**](../../concepts/disruption#interruption): Nodes are sometimes involuntarily disrupted by things like Spot interruption, health changes, and instance events, requiring new nodes to be deployed.
+
+See [**Automated Methods**](../../concepts/disruption#automated-methods) for details on how Karpenter uses these automated actions to replace nodes.
+
+The most relevant automated disruption method is [**Drift**](../../concepts/disruption#drift), since it is initiated when a new AMI is selected-on by your `amiSelectorTerms`. This could be due to a manual update (e.g. a new `id` term was added), or due to a new AMI being resolved by a dynamic term.
+
+If you're using an `alias` with the `latest` pin (e.g. `al2023@latest`), Karpenter periodically checks for new AMI releases. Since AMI releases are outside your control, this could result in new AMIs being deployed before they have been properly tested in a lower environment. This is why we **strongly recommend** using version pins in production environments when using an alias (e.g. `al2023@v20240807`).
+
+:::warning Important
+If you are new to Karpenter, you should know that the behavior described here is different than you get with Managed Node Groups (MNG). MNG will always use the assigned AMI when it creates a new node and will never automatically upgrade to a new AMI when a new node is required. See [Updating a Managed Node Group](https://docs.aws.amazon.com/eks/latest/userguide/update-managed-node-group.html) to see how you would manually update MNG to use new AMIs.
+:::
+
+## Controlling AMI Replacement
+
+You have several options for controlling how and when new AMIs are used to replace nodes in your cluster:
+
+### Pin to specific AMI versions
+
+The safest approach is to pin to specific AMI versions and manage updates manually:
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+  # Pin to a specific AMI ID
+  - id: ami-12345678
+  # Or pin to a specific version using alias
+  - alias: al2023@v20240807
+```
+
+### Use AMI families with version control
+
+You can select AMIs by family but still maintain control:
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiSelectorTerms:
+  # Select latest AL2023 AMI (more risky)
+  - alias: al2023@latest
+  # Select by tags with version constraints
+  - tags:
+      Name: "amazon-eks-node-al2023-*"
+      "kubernetes.io/cluster/my-cluster": "owned"
+```
+
+### Testing AMI Updates
+
+Before deploying new AMIs to production:
+
+1. **Create a test NodePool** with the new AMI
+2. **Deploy test workloads** to validate functionality
+3. **Monitor for issues** over a period of time
+4. **Gradually roll out** to production NodePools
+
+```yaml
+# Test NodePool with new AMI
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: test-new-ami
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: test-nodeclass
+      taints:
+      - key: test-ami
+        value: "true"
+        effect: NoSchedule
+---
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: test-nodeclass
+spec:
+  amiSelectorTerms:
+  - alias: al2023@latest  # Test latest AMI
+```
+
+## AMI Selection Strategies
+
+### By AMI ID
+
+Most secure but requires manual management:
+
+```yaml
+amiSelectorTerms:
+- id: ami-0123456789abcdef0
+- id: ami-0987654321fedcba0  # Multiple AMIs for availability
+```
+
+### By AMI Alias
+
+Convenient with version control:
+
+```yaml
+amiSelectorTerms:
+# Recommended: Pin to specific version
+- alias: al2023@v20240807
+- alias: bottlerocket@v1.20.4
+
+# Not recommended for production: Always latest
+- alias: al2023@latest
+```
+
+### By Tags
+
+Flexible selection with filtering:
+
+```yaml
+amiSelectorTerms:
+- tags:
+    Name: "amazon-eks-node-*"
+    Owner: "amazon"
+    "kubernetes.io/cluster/my-cluster": "owned"
+```
+
+### By Name Pattern
+
+Useful for custom AMIs:
+
+```yaml
+amiSelectorTerms:
+- name: "my-custom-eks-node-*"
+  owner: "123456789012"
+```
+
+## Monitoring AMI Changes
+
+### CloudWatch Events
+
+Monitor AMI changes using CloudWatch Events:
+
+```json
+{
+  "source": ["aws.ec2"],
+  "detail-type": ["EBS Snapshot Notification"],
+  "detail": {
+    "state": ["completed"]
+  }
+}
+```
+
+### Karpenter Logs
+
+Monitor Karpenter logs for AMI selections:
+
+```bash
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i ami
+```
+
+### Node Annotations
+
+Check node annotations to see which AMI was used:
+
+```bash
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.karpenter\.k8s\.aws/instance-ami}{"\n"}{end}'
+```
+
+## Best Practices
+
+1. **Use version-pinned aliases in production** (e.g., `al2023@v20240807`)
+2. **Test new AMIs in non-production environments first**
+3. **Implement gradual rollout strategies** for AMI updates
+4. **Monitor cluster health** after AMI changes
+5. **Maintain rollback procedures** for problematic AMIs
+6. **Document your AMI update process** and schedule
+7. **Use multiple AMI options** for high availability
+
+## Example Configurations
+
+### Production Setup
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: production
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+  # Pin to tested, stable version
+  - alias: al2023@v20240807
+  # Fallback AMI
+  - id: ami-0123456789abcdef0
+  subnetSelectorTerms:
+  - tags:
+      karpenter.sh/discovery: "my-cluster"
+  securityGroupSelectorTerms:
+  - tags:
+      karpenter.sh/discovery: "my-cluster"
+```
+
+### Development Setup
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: development
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+  # OK to use latest in dev for testing
+  - alias: al2023@latest
+  subnetSelectorTerms:
+  - tags:
+      karpenter.sh/discovery: "my-dev-cluster"
+```
+
+### Custom AMI Setup
+
+```yaml
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: custom
+spec:
+  amiSelectorTerms:
+  # Use your custom AMI
+  - tags:
+      Name: "my-company-eks-node"
+      Environment: "production"
+      Version: "v2.1.0"
+  userData: |
+    #!/bin/bash
+    # Custom initialization for your AMI
+    /etc/eks/bootstrap.sh my-cluster
+```

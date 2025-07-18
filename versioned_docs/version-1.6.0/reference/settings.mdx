@@ -1,0 +1,299 @@
+---
+title: "Settings"
+sidebar_position: 1
+description: Configure Karpenter
+---
+
+import ProviderContent from '@site/src/components/ProviderContent/ProviderContent';
+
+Karpenter surfaces environment variables and CLI parameters to allow you to configure certain global settings on the controllers. These settings are described below.
+
+## Common Settings
+
+These settings are available for all Karpenter providers:
+
+| Environment Variable | CLI Flag | Description |
+|--|--|--|
+| BATCH_IDLE_DURATION | --batch-idle-duration | The maximum amount of time with no new pending pods that if exceeded ends the current batching window. If pods arrive faster than this time, the batching window will be extended up to the maxDuration. If they arrive slower, the pods will be batched separately. (default = 1s)|
+| BATCH_MAX_DURATION | --batch-max-duration | The maximum length of a batch window. The longer this is, the more pods we can consider for provisioning at one time which usually results in fewer but larger nodes. (default = 10s)|
+| CLUSTER_CA_BUNDLE | --cluster-ca-bundle | Cluster CA bundle for nodes to use for TLS connections with the API server. If not set, this is taken from the controller's TLS configuration.|
+| CLUSTER_ENDPOINT | --cluster-endpoint | The external kubernetes cluster endpoint for new nodes to connect with.|
+| CLUSTER_NAME | --cluster-name | [REQUIRED] The kubernetes cluster name.|
+| ENABLE_PROFILING | --enable-profiling | Enable the profiling on the metric endpoint|
+| HEALTH_PROBE_PORT | --health-probe-port | The port the health probe endpoint binds to for reporting controller health (default = 8081)|
+| KARPENTER_SERVICE | --karpenter-service | The Karpenter Service name for the dynamic webhook certificate|
+| KUBE_CLIENT_BURST | --kube-client-burst | The maximum allowed burst of queries to the kube-apiserver (default = 300)|
+| KUBE_CLIENT_QPS | --kube-client-qps | The smoothed rate of qps to kube-apiserver (default = 200)|
+| LOG_LEVEL | --log-level | Log verbosity level. Can be one of 'debug', 'info', or 'error' (default = info)|
+| MEMORY_LIMIT | --memory-limit | Memory limit on the container running the controller. The GC soft memory limit is set to 90% of this value. (default = -1)|
+| METRICS_PORT | --metrics-port | The port the metric endpoint binds to for operating metrics about the controller itself (default = 8000/8080)|
+| VM_MEMORY_OVERHEAD_PERCENT | --vm-memory-overhead-percent | The VM memory overhead as a percent that will be subtracted from the total memory for all instance types. (default = 0.075)|
+
+<ProviderContent providers={["azure"]}>
+## Azure-Specific Settings
+
+These settings are specific to Karpenter for Azure:
+
+| Environment Variable | CLI Flag | Description |
+|--|--|--|
+| KUBELET_BOOTSTRAP_TOKEN | --kubelet-bootstrap-token | [REQUIRED] The bootstrap token for new nodes to join the cluster.|
+| KUBELET_IDENTITY_CLIENT_ID | --kubelet-identity-client-id | The client ID of the kubelet identity.|
+| LINUX_ADMIN_USERNAME | --linux-admin-username | The admin username for Linux VMs. (default = azureuser)|
+| NETWORK_DATAPLANE | --network-dataplane | The network dataplane used by the cluster. (default = cilium)|
+| NETWORK_PLUGIN | --network-plugin | The network plugin used by the cluster. (default = azure)|
+| NETWORK_PLUGIN_MODE | --network-plugin-mode | Network plugin mode of the cluster. (default = overlay)|
+| NETWORK_POLICY | --network-policy | The network policy used by the cluster.|
+| NODE_IDENTITIES | --node-identities | User assigned identities for nodes.|
+| AZURE_NODE_RESOURCE_GROUP | --node-resource-group | [REQUIRED] The resource group created and managed by AKS where the nodes live|
+| SSH_PUBLIC_KEY | --ssh-public-key | [REQUIRED] VM SSH public key.|
+| VNET_GUID | --vnet-guid | The vnet guid of the clusters vnet, only required by azure cni with overlay + byo vnet|
+| VNET_SUBNET_ID | --vnet-subnet-id | [REQUIRED] The default subnet ID to use for new nodes. This must be a valid ARM resource ID for subnet that does not overlap with the service CIDR or the pod CIDR.|
+| USE_SIG | --use-sig | If set to true karpenter will use the AKS managed shared image galleries. If set to false karpenter will use community image galleries. (default = false)|
+
+### Azure Feature Gates
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| Drift | true | Automatic detection and replacement of drifted nodes |
+| SpotToSpotConsolidation | false | Enables consolidation between spot instances |
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+## AWS-Specific Settings
+
+These settings are specific to Karpenter for AWS:
+
+| Environment Variable | CLI Flag | Description |
+|--|--|--|
+| CPU_REQUESTS | --cpu-requests | CPU requests in millicores on the container running the controller. (default = 1000)|
+| DISABLE_LEADER_ELECTION | --disable-leader-election | Disable the leader election client before executing the main loop.|
+| EKS_CONTROL_PLANE | --eks-control-plane | Marking this true means that your cluster is running with an EKS control plane and Karpenter should attempt to discover cluster details from the DescribeCluster API |
+| INTERRUPTION_QUEUE | --interruption-queue | Interruption queue is the name of the SQS queue used for processing interruption events from EC2.|
+| ISOLATED_VPC | --isolated-vpc | If true, then assume we can't reach AWS services which don't have a VPC endpoint.|
+| LEADER_ELECTION_NAME | --leader-election-name | Leader election name to create and monitor the lease if running outside the cluster (default = karpenter-leader-election)|
+| LEADER_ELECTION_NAMESPACE | --leader-election-namespace | Leader election namespace to create and monitor the lease if running outside the cluster|
+| LOG_ERROR_OUTPUT_PATHS | --log-error-output-paths | Optional comma separated paths for logging error output (default = stderr)|
+| LOG_OUTPUT_PATHS | --log-output-paths | Optional comma separated paths for directing log output (default = stdout)|
+| MIN_VALUES_POLICY | --min-values-policy | Min values policy for scheduling. Options include 'Strict' or 'BestEffort' (default = Strict)|
+| PREFERENCE_POLICY | --preference-policy | How the Karpenter scheduler should treat preferences. Can be one of 'Ignore' and 'Respect' (default = Respect)|
+| RESERVED_ENIS | --reserved-enis | Reserved ENIs are not included in the calculations for max-pods or kube-reserved. (default = 0)|
+
+### AWS Feature Gates
+
+You can enable feature gates through the `--feature-gates` CLI argument or the `FEATURE_GATES` environment variable.
+
+| Feature | Default | Stage | Description |
+|---------|---------|--------|-------------|
+| NodeRepair | false | Alpha | Automatic repair of unhealthy nodes |
+| ReservedCapacity | true | Beta | Support for reserved capacity |
+| SpotToSpotConsolidation | false | Alpha | Enables consolidation between spot instances |
+| Drift | true | Stable | Automatic detection and replacement of drifted nodes |
+
+Example: `--feature-gates NodeRepair=true,SpotToSpotConsolidation=true`
+</ProviderContent>
+
+## Configuration Examples
+
+<ProviderContent providers={["azure"]}>
+### Azure Helm Configuration
+
+```yaml
+# values.yaml for Karpenter on Azure
+controller:
+  env:
+    - name: CLUSTER_NAME
+      value: "my-aks-cluster"
+    - name: AZURE_NODE_RESOURCE_GROUP
+      value: "MC_myResourceGroup_myAKSCluster_eastus"
+    - name: VNET_SUBNET_ID
+      value: "/subscriptions/12345/resourceGroups/myRG/providers/Microsoft.Network/virtualNetworks/myVNet/subnets/default"
+    - name: SSH_PUBLIC_KEY
+      value: "ssh-rsa AAAAB3NzaC1yc2E..."
+    - name: LOG_LEVEL
+      value: "info"
+    - name: FEATURE_GATES
+      value: "Drift=true,SpotToSpotConsolidation=false"
+```
+
+### Azure Environment Variables
+
+```bash
+export CLUSTER_NAME="my-aks-cluster"
+export AZURE_NODE_RESOURCE_GROUP="MC_myResourceGroup_myAKSCluster_eastus"
+export VNET_SUBNET_ID="/subscriptions/12345/resourceGroups/myRG/providers/Microsoft.Network/virtualNetworks/myVNet/subnets/default"
+export SSH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2E..."
+export LOG_LEVEL="debug"
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### AWS Helm Configuration
+
+```yaml
+# values.yaml for Karpenter on AWS
+settings:
+  clusterName: "my-eks-cluster"
+  interruptionQueue: "my-cluster-interruption-queue"
+  clusterEndpoint: "https://ABCDEF1234567890.gr7.us-west-2.eks.amazonaws.com"
+  featureGates:
+    drift: true
+    spotToSpotConsolidation: false
+    nodeRepair: true
+
+controller:
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+```
+
+### AWS Environment Variables
+
+```bash
+export CLUSTER_NAME="my-eks-cluster"
+export INTERRUPTION_QUEUE="my-cluster-interruption-queue"
+export CLUSTER_ENDPOINT="https://ABCDEF1234567890.gr7.us-west-2.eks.amazonaws.com"
+export FEATURE_GATES="Drift=true,SpotToSpotConsolidation=false,NodeRepair=true"
+export LOG_LEVEL="debug"
+```
+</ProviderContent>
+
+## Monitoring and Debugging
+
+### Metrics Configuration
+
+<ProviderContent providers={["azure"]}>
+```bash
+# Enable profiling for Azure
+export ENABLE_PROFILING=true
+export METRICS_PORT=8000
+export HEALTH_PROBE_PORT=8081
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+```bash
+# Enable profiling for AWS
+export ENABLE_PROFILING=true
+export METRICS_PORT=8080
+export HEALTH_PROBE_PORT=8081
+```
+</ProviderContent>
+
+### Log Configuration
+
+```bash
+# Common log settings
+export LOG_LEVEL=debug
+
+# Memory debugging
+export MEMORY_LIMIT=2Gi
+export VM_MEMORY_OVERHEAD_PERCENT=0.075
+```
+
+<ProviderContent providers={["aws"]}>
+### AWS-specific Debugging
+
+```bash
+# AWS VPC debugging
+export ISOLATED_VPC=true  # If running in isolated VPC
+
+# AWS interruption handling
+export INTERRUPTION_QUEUE=my-cluster-interruption-queue
+
+# AWS EKS specific
+export EKS_CONTROL_PLANE=true
+```
+</ProviderContent>
+
+## Best Practices
+
+### Resource Management
+
+1. **Set appropriate memory limits** to prevent OOM issues
+2. **Configure batching** to optimize provisioning performance
+3. **Enable metrics** for monitoring and alerting
+
+### Security
+
+<ProviderContent providers={["azure"]}>
+1. **Rotate SSH keys** regularly for VM access
+2. **Use managed identities** for authentication
+3. **Secure VNet configurations** with proper subnet isolation
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+1. **Use IAM roles** instead of access keys
+2. **Enable VPC flow logs** for network monitoring
+3. **Configure SQS interruption queues** for spot instance handling
+</ProviderContent>
+
+### Performance
+
+1. **Tune batch settings** based on cluster size and workload patterns
+2. **Adjust kube-client settings** for large clusters
+3. **Monitor memory usage** and adjust limits accordingly
+
+## Troubleshooting
+
+### Common Issues
+
+<ProviderContent providers={["azure"]}>
+#### Azure Authentication Issues
+
+```bash
+# Check managed identity configuration
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i "auth"
+
+# Verify VNET subnet permissions
+az network vnet subnet show --ids $VNET_SUBNET_ID
+```
+
+#### Azure Networking Issues
+
+```bash
+# Check NSG rules
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i "network"
+
+# Verify VM provisioning
+kubectl get events --field-selector reason=ProvisioningFailed
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+#### AWS IAM Permission Issues
+
+```bash
+# Check IAM role permissions
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter | grep -i "access denied"
+
+# Verify interruption queue
+aws sqs get-queue-attributes --queue-url $INTERRUPTION_QUEUE_URL
+```
+
+#### AWS VPC Issues
+
+```bash
+# Check subnet availability
+aws ec2 describe-subnets --filters "Name=tag:karpenter.sh/discovery,Values=$CLUSTER_NAME"
+
+# Verify security group rules
+aws ec2 describe-security-groups --filters "Name=tag:karpenter.sh/discovery,Values=$CLUSTER_NAME"
+```
+</ProviderContent>
+
+### Debug Commands
+
+```bash
+# Check controller logs
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter --tail=100
+
+# View controller configuration
+kubectl get configmap -n karpenter karpenter-global-settings -o yaml
+
+# Check resource usage
+kubectl top pods -n karpenter
+```

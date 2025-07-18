@@ -1,0 +1,104 @@
+---
+id: intro
+title: "Karpenter Documentation"
+sidebar_position: 1
+---
+
+import ProviderContent from '@site/src/components/ProviderContent/ProviderContent';
+
+# Karpenter Documentation
+
+Karpenter is an open-source node lifecycle management project built for Kubernetes.
+
+<ProviderContent providers={["azure"]}>
+Adding Karpenter to an Azure Kubernetes Service (AKS) cluster can dramatically improve the efficiency and cost of running workloads on that cluster.
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+Adding Karpenter to a Kubernetes cluster can dramatically improve the efficiency and cost of running workloads on that cluster.
+</ProviderContent>
+
+Karpenter works by:
+
+* **Watching** for pods that the Kubernetes scheduler has marked as unschedulable
+* **Evaluating** scheduling constraints (resource requests, nodeselectors, affinities, tolerations, and topology spread constraints) requested by the pods
+* **Provisioning** <ProviderContent providers={["azure"]}>Azure nodes</ProviderContent><ProviderContent providers={["aws"]}>nodes</ProviderContent> that meet the requirements of the pods
+* **Disrupting** the nodes when the nodes are no longer needed
+
+## Getting Started
+
+<ProviderContent providers={["azure"]}>
+As someone using Karpenter, once your AKS cluster and the Karpenter controller are up and running (see [Getting Started](./getting-started/quickstart)), you can:
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+As someone using Karpenter, once your Kubernetes cluster and the Karpenter controller are up and running (see [Getting Started](./getting-started/quickstart)), you can:
+</ProviderContent>
+
+### Set up NodePools
+
+By applying a NodePool to Karpenter, you can configure constraints on node provisioning and set values for node expiry, node consolidation, or Kubelet configuration values.
+
+<ProviderContent providers={["azure"]}>
+NodePool-level constraints related to Kubernetes and Azure include:
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+NodePool-level constraints related to Kubernetes and your cloud provider (AWS) include:
+</ProviderContent>
+
+- **Taints** (`taints`): Identify taints to add to provisioned nodes. If a pod doesn't have a matching toleration for the taint, the effect set by the taint occurs (NoSchedule, PreferNoSchedule, or NoExecute). See Kubernetes [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) for details.
+
+- **Labels** (`labels`): Apply arbitrary key-value pairs to nodes that can be matched by pods.
+
+- **Requirements** (`requirements`): Set acceptable (`In`) and unacceptable (`NotIn`) Kubernetes and Karpenter values for node provisioning based on [Well-Known Labels](https://kubernetes.io/docs/reference/labels-annotations-taints/) and <ProviderContent providers={["azure"]}>Azure-specific settings</ProviderContent><ProviderContent providers={["aws"]}>cloud-specific settings</ProviderContent>. These can include [instance types](https://kubernetes.io/docs/reference/labels-annotations-taints/#nodekubernetesioinstance-type), [zones](https://kubernetes.io/docs/reference/labels-annotations-taints/#topologykubernetesiozone), [computer architecture](https://kubernetes.io/docs/reference/labels-annotations-taints/#kubernetes-io-arch), and [capacity type](./concepts/nodepools#capacity-type) (such as <ProviderContent providers={["azure"]}>Azure spot or regular</ProviderContent><ProviderContent providers={["aws"]}>AWS spot or on-demand</ProviderContent>).
+
+- **Limits** (`limits`): Lets you set limits on the total CPU and Memory that can be used by the cluster, effectively stopping further node provisioning when those limits have been reached.
+
+### Deploy Workloads
+
+When deploying workloads, you can request that scheduling constraints be met to direct which nodes Karpenter provisions for those workloads. Use any of the following Pod spec constraints when you deploy pods:
+
+- **Resources** (`resources`): Make requests and set limits for memory and CPU for a Pod. See [Requests and limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#requests-and-limits) for details.
+
+- **Nodes** (`nodeSelector`): Use [nodeSelector](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector) to ask to match a node that includes one or more selected key-value pairs. These can be arbitrary labels you define, Kubernetes well-known labels, or Karpenter labels.
+
+- **Node affinity** (`NodeAffinity`): Set [nodeAffinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#node-affinity) to have the Pod run on nodes that have matching `nodeSelectorTerms` set or not set. Matching affinity can be a particular operating system or zone. You can set the node affinity to be required or simply preferred. `NotIn` and `DoesNotExist` allow you to define node anti-affinity behavior.
+
+- **Pod affinity and anti-affinity** (`podAffinity/podAntiAffinity`): Choose to run a pod on a node based on whether certain pods are running (`podAffinity`) or not running (`podAntiAffinity`) on the node. See [Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity) for details.
+
+- **Tolerations** (`tolerations`): Identify that a pod must match (tolerate) a taint on a node before the pod will run on it. Without the toleration, the effect set by the taint occurs (NoSchedule, PreferNoSchedule, or NoExecute). See Kubernetes [Taints and Tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/) for details.
+
+- **Topology spread** (`topologySpreadConstraints`): Request that pods be spread across zones (`topology.kubernetes.io/zone`) or hosts (`kubernetes.io/hostname`), or <ProviderContent providers={["azure"]}>Azure capacity types</ProviderContent><ProviderContent providers={["aws"]}>cloud provider capacity types</ProviderContent> (`karpenter.sh/capacity-type`). See [Pod Topology Spread Constraints](https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/) for details.
+
+- **Persistent volume topology**: Indicate that the Pod has a storage requirement that requires a node running in a particular zone that can make that storage available to the node.
+
+## Quick Start
+
+Ready to get started? Check out our [Getting Started Guide](./getting-started/quickstart) for step-by-step instructions on installing and configuring Karpenter.
+
+## Key Concepts
+
+Learn about the core concepts that make Karpenter work:
+
+- **[NodePools](./concepts/nodepools)**: Configure node provisioning constraints and policies
+- **[NodeClasses](./concepts/nodeclasses)**: Define cloud provider-specific node configurations  
+- **[Scheduling](./concepts/scheduling)**: Understand how Karpenter makes scheduling decisions
+- **[Disruption](./concepts/disruption)**: Learn about node lifecycle management and consolidation
+
+<ProviderContent providers={["azure"]}>
+## Azure-Specific Features
+
+- **[NAP vs Self-hosted](./azure/nap-vs-self-hosted)**: Choose the right deployment model for Azure
+- **[Custom Networking](./azure/custom-networking)**: Configure VNets, subnets, and NSGs
+- **[VM Sizes](./azure/instance-types)**: Understand Azure VM families and performance characteristics
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+## AWS-Specific Features
+
+- **[Managing AMIs](./aws/tasks/managing-amis)**: Control AMI selection and lifecycle
+- **[Upgrade Guide](./aws/upgrading/upgrade-guide)**: Safely upgrade Karpenter installations
+</ProviderContent>
+
+Learn more about Karpenter and how to get started with the guides above.

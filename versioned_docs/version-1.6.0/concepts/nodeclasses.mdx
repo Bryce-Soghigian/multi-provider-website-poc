@@ -1,0 +1,410 @@
+---
+title: "NodeClasses"
+sidebar_position: 2
+description: Configure cloud provider-specific settings with NodeClasses
+---
+
+import ProviderContent from '@site/src/components/ProviderContent/ProviderContent';
+import ProviderVariable from '@site/src/components/ProviderVariable/ProviderVariable';
+
+<ProviderContent providers={["azure"]}>
+Node Classes enable configuration of Azure specific settings.
+Each NodePool must reference an AKSNodeClass using `spec.template.spec.nodeClassRef`.
+Multiple NodePools may point to the same AKSNodeClass.
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+Node Classes enable configuration of AWS specific settings.
+Each NodePool must reference an EC2NodeClass using `spec.template.spec.nodeClassRef`.
+Multiple NodePools may point to the same EC2NodeClass.
+</ProviderContent>
+
+<ProviderContent providers={["azure"]}>
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: default
+---
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: default
+spec:
+  # Optional, configures the VM image family to use
+  imageFamily: Ubuntu2204
+
+  # Optional, configures the VNET subnet to use for node network interfaces
+  # If not specified, uses the default VNET subnet from Karpenter configuration
+  vnetSubnetID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/my-rg/providers/Microsoft.Network/virtualNetworks/my-vnet/subnets/my-subnet"
+
+  # Optional, configures the OS disk size in GB
+  osDiskSizeGB: 128
+
+  # Optional, configures kubelet settings
+  kubelet:
+    cpuManagerPolicy: "none"
+    cpuCFSQuota: true
+    cpuCFSQuotaPeriod: "100ms"
+    imageGCHighThresholdPercent: 85
+    imageGCLowThresholdPercent: 80
+    topologyManagerPolicy: "none"
+    allowedUnsafeSysctls: []
+    containerLogMaxSize: "50Mi"
+    containerLogMaxFiles: 5
+    podPidsLimit: -1
+
+  # Optional, configures the maximum number of pods per node
+  maxPods: 30
+
+  # Optional, propagates tags to underlying Azure resources
+  tags:
+    team: team-a
+    app: team-a-app
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: default
+---
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  kubelet:
+    podsPerCore: 2
+    maxPods: 20
+    systemReserved:
+        cpu: 100m
+        memory: 100Mi
+        ephemeral-storage: 1Gi
+    kubeReserved:
+        cpu: 200m
+        memory: 100Mi
+        ephemeral-storage: 3Gi
+    evictionHard:
+        memory.available: 5%
+        nodefs.available: 10%
+        nodefs.inodesFree: 10%
+    evictionSoft:
+        memory.available: 500Mi
+        nodefs.available: 15%
+        nodefs.inodesFree: 15%
+    evictionSoftGracePeriod:
+        memory.available: 1m
+        nodefs.available: 1m30s
+        nodefs.inodesFree: 2m
+    evictionMaxPodGracePeriod: 60
+    imageGCHighThresholdPercent: 85
+    imageGCLowThresholdPercent: 80
+    cpuCFSQuota: true
+    clusterDNS: ["10.0.1.100"]
+  
+  # Optional, dictates UserData generation and default block device mappings.
+  amiFamily: AL2
+
+  # Required, discovers subnets to attach to instances
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
+        environment: test
+    - id: subnet-09fa4a0a8f233a921
+
+  # Required, discovers security groups to attach to instances
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "${CLUSTER_NAME}"
+        environment: test
+    - name: my-security-group
+    - id: sg-063d7acfb4b06c82c
+
+  # Optional, IAM role to use for the node identity
+  role: "KarpenterNodeRole-${CLUSTER_NAME}"
+
+  # Optional, IAM instance profile to use for the node identity
+  instanceProfile: "KarpenterNodeInstanceProfile-${CLUSTER_NAME}"
+
+  # AMI selection terms
+  amiSelectorTerms:
+    - alias: al2@latest
+```
+</ProviderContent>
+
+Refer to the [NodePool docs](./nodepools) for settings applicable to all providers. 
+
+<ProviderContent providers={["azure"]}>
+To explore various `AKSNodeClass` configurations, refer to the examples provided [in the Karpenter GitHub repository](https://github.com/Azure/karpenter-provider-azure/tree/main/examples/).
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+To explore various `EC2NodeClass` configurations, refer to the examples provided [in the Karpenter GitHub repository](https://github.com/aws/karpenter-provider-aws/tree/main/examples/).
+</ProviderContent>
+
+## Image Configuration
+
+<ProviderContent providers={["azure"]}>
+### spec.imageFamily
+
+ImageFamily is an optional field that dictates the default VM image and bootstrapping logic for nodes provisioned through this `AKSNodeClass`. If not specified, the default is `Ubuntu2204`. GPUs are supported with both image families on compatible VM sizes.
+
+Karpenter supports two image family values:
+
+- **`Ubuntu2204`** - [Ubuntu 22.04 LTS](https://learn.microsoft.com/en-us/azure/aks/cluster-configuration) is the default Linux distribution for AKS nodes.
+- **`AzureLinux`** - [Azure Linux](https://learn.microsoft.com/en-us/azure/aks/cluster-configuration) is Microsoft's alternative Linux distribution for AKS workloads.
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### spec.amiFamily
+
+The `amiFamily` field dictates the default AMI and bootstrapping logic for nodes provisioned through this `EC2NodeClass`. Supported values include:
+
+- **`AL2`** - Amazon Linux 2 (default)
+- **`AL2023`** - Amazon Linux 2023  
+- **`Bottlerocket`** - Bottlerocket OS
+- **`Ubuntu`** - Ubuntu images
+- **`Windows2019`** - Windows Server 2019
+- **`Windows2022`** - Windows Server 2022
+</ProviderContent>
+
+## Network Configuration
+
+<ProviderContent providers={["azure"]}>
+### spec.vnetSubnetID
+
+The `vnetSubnetID` field specifies which Azure Virtual Network subnet should be used for provisioning node network interfaces. This field is optional; if not specified, Karpenter will use the default subnet configured in the Karpenter installation.
+
+The subnet ID must be in the full Azure Resource Manager format:
+```
+/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.Network/virtualNetworks/{vnet-name}/subnets/{subnet-name}
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### spec.subnetSelectorTerms
+
+Karpenter discovers subnets using the `subnetSelectorTerms` field. Each subnet selector term is ORed together, while all conditions within a single term are ANDed together.
+
+```yaml
+subnetSelectorTerms:
+  # Select subnets by tags
+  - tags:
+      karpenter.sh/discovery: "${CLUSTER_NAME}"
+      Environment: "test"
+  # Select specific subnet by ID
+  - id: "subnet-12345"
+```
+
+### spec.securityGroupSelectorTerms
+
+Similar to subnet selection, security groups are discovered using selector terms:
+
+```yaml
+securityGroupSelectorTerms:
+  # Select by tags
+  - tags:
+      karpenter.sh/discovery: "${CLUSTER_NAME}"
+  # Select by name
+  - name: "my-security-group"
+  # Select by ID
+  - id: "sg-12345"
+```
+</ProviderContent>
+
+## Storage Configuration
+
+<ProviderContent providers={["azure"]}>
+### spec.osDiskSizeGB
+
+The `osDiskSizeGB` field configures the OS disk size in GB for nodes. If not specified, the default size depends on the VM size selected.
+
+```yaml
+spec:
+  osDiskSizeGB: 128
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### spec.blockDeviceMappings
+
+Configure EBS volumes attached to nodes:
+
+```yaml
+spec:
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 20Gi
+        volumeType: gp3
+        encrypted: true
+```
+</ProviderContent>
+
+## Kubelet Configuration
+
+Both providers support extensive kubelet configuration through the `spec.kubelet` field:
+
+```yaml
+spec:
+  kubelet:
+    # Resource management
+    maxPods: 30
+    cpuManagerPolicy: "none"
+    topologyManagerPolicy: "none"
+    
+    # Container runtime
+    cpuCFSQuota: true
+    cpuCFSQuotaPeriod: "100ms"
+    
+    # Image garbage collection
+    imageGCHighThresholdPercent: 85
+    imageGCLowThresholdPercent: 80
+    
+    # Container logs
+    containerLogMaxSize: "50Mi"
+    containerLogMaxFiles: 5
+```
+
+<ProviderContent providers={["aws"]}>
+AWS EC2NodeClasses support additional kubelet configuration options:
+
+```yaml
+spec:
+  kubelet:
+    # Per-core pod limits
+    podsPerCore: 2
+    
+    # Resource reservations
+    systemReserved:
+      cpu: 100m
+      memory: 100Mi
+      ephemeral-storage: 1Gi
+    kubeReserved:
+      cpu: 200m
+      memory: 100Mi
+      ephemeral-storage: 3Gi
+    
+    # Eviction policies
+    evictionHard:
+      memory.available: 5%
+      nodefs.available: 10%
+    evictionSoft:
+      memory.available: 500Mi
+      nodefs.available: 15%
+    evictionSoftGracePeriod:
+      memory.available: 1m
+      nodefs.available: 1m30s
+    
+    # DNS configuration
+    clusterDNS: ["10.0.1.100"]
+```
+</ProviderContent>
+
+## Resource Tagging
+
+<ProviderContent providers={["azure"]}>
+### spec.tags
+
+Tags specified in the `AKSNodeClass` are propagated to the underlying Azure resources:
+
+```yaml
+spec:
+  tags:
+    team: my-team
+    environment: production
+    cost-center: engineering
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### spec.tags
+
+Tags specified in the `EC2NodeClass` are propagated to EC2 instances and EBS volumes:
+
+```yaml
+spec:
+  tags:
+    Team: my-team
+    Environment: production
+    CostCenter: engineering
+```
+</ProviderContent>
+
+## Advanced Configuration
+
+<ProviderContent providers={["aws"]}>
+### IAM Configuration
+
+Configure the IAM role or instance profile for nodes:
+
+```yaml
+spec:
+  # Option 1: Specify IAM role (recommended)
+  role: "KarpenterNodeRole-${CLUSTER_NAME}"
+  
+  # Option 2: Specify instance profile
+  instanceProfile: "KarpenterNodeInstanceProfile-${CLUSTER_NAME}"
+```
+
+### User Data
+
+Customize the bootstrap script with additional user data:
+
+```yaml
+spec:
+  userData: |
+    #!/bin/bash
+    # Custom initialization script
+    echo "Custom setup complete"
+```
+
+### AMI Selection
+
+Control which AMIs are used for nodes:
+
+```yaml
+spec:
+  amiSelectorTerms:
+    # Use latest AL2 AMI
+    - alias: al2@latest
+    # Or select by tags
+    - tags:
+        Name: "my-custom-ami"
+        Environment: "prod"
+    # Or select by ID
+    - id: "ami-12345"
+```
+</ProviderContent>
+
+<ProviderContent providers={["azure"]}>
+### VM Extensions
+
+Configure Azure VM extensions for additional functionality:
+
+```yaml
+spec:
+  extensions:
+    - name: "AADSSHLoginForLinux"
+      publisher: "Microsoft.Azure.ActiveDirectory"
+      type: "AADSSHLoginForLinux"
+      version: "1.0"
+```
+</ProviderContent>

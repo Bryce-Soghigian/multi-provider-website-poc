@@ -1,0 +1,501 @@
+---
+title: "Azure VM Sizes"
+sidebar_position: 3
+description: Understanding Azure VM sizes supported by Karpenter
+---
+
+This guide covers the Azure VM sizes (instance types) that Karpenter supports and how to configure them for optimal workload placement.
+
+## Supported VM Families
+
+Karpenter for Azure supports most general-purpose and specialized VM families available in Azure:
+
+### General Purpose
+
+#### D-series (Balanced CPU-to-memory ratio)
+- **Dv5/Dsv5**: Latest generation with Intel Ice Lake or AMD Milan processors
+- **Dv4/Dsv4**: Intel Cascade Lake processors
+- **Dv3/Dsv3**: Intel Broadwell or Haswell processors
+
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["D"]
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_D2s_v5", "Standard_D4s_v5", "Standard_D8s_v5"]
+```
+
+#### B-series (Burstable performance)
+- **Bsv2**: ARM-based burstable VMs
+- **Bs**: Intel-based burstable VMs
+
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["B"]
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_B2s", "Standard_B4ms", "Standard_B8ms"]
+```
+
+### Compute Optimized
+
+#### F-series (High CPU-to-memory ratio)
+- **Fv2**: Intel Cascade Lake processors
+- **Fs**: Intel Broadwell processors
+
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["F"]
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_F4s_v2", "Standard_F8s_v2", "Standard_F16s_v2"]
+```
+
+### Memory Optimized
+
+#### E-series (High memory-to-CPU ratio)
+- **Ev5/Esv5**: Latest generation with Intel Ice Lake or AMD Milan
+- **Ev4/Esv4**: Intel Cascade Lake processors
+- **Ev3/Esv3**: Intel Broadwell or Haswell processors
+
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["E"]
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_E2s_v5", "Standard_E4s_v5", "Standard_E8s_v5"]
+```
+
+#### M-series (Very high memory)
+- **Mv2**: Large memory workloads
+- **Ms**: Memory-optimized SAP workloads
+
+### GPU-Enabled
+
+#### N-series (GPU workloads)
+- **NCv3**: NVIDIA Tesla V100 for compute
+- **NCasT4_v3**: NVIDIA Tesla T4 for inference
+- **NDv2**: NVIDIA Tesla V100 for deep learning
+
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["N"]
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_NC6s_v3", "Standard_NC12s_v3", "Standard_NC24s_v3"]
+```
+
+## VM Size Selection
+
+### Automatic Selection
+
+Let Karpenter choose the best VM size:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: automatic
+spec:
+  template:
+    spec:
+      requirements:
+      # Only specify what you need
+      - key: kubernetes.io/arch
+        operator: In
+        values: ["amd64"]
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot", "on-demand"]
+```
+
+### Family-Based Selection
+
+Select by VM family for consistent performance characteristics:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: compute-optimized
+spec:
+  template:
+    spec:
+      requirements:
+      # Compute-optimized families
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["F", "Fx"]
+      - key: karpenter.azure.com/sku-version
+        operator: Gte
+        values: ["2"]  # v2 and above
+```
+
+### Size-Based Selection
+
+Control specific VM sizes:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: specific-sizes
+spec:
+  template:
+    spec:
+      requirements:
+      # Specific VM sizes
+      - key: karpenter.azure.com/sku-name
+        operator: In
+        values: 
+        - "Standard_D4s_v5"
+        - "Standard_D8s_v5"
+        - "Standard_E4s_v5"
+        - "Standard_E8s_v5"
+```
+
+## Performance Characteristics
+
+### CPU Performance
+
+#### CPU Types by Family
+- **D-series**: Balanced performance
+- **F-series**: High-frequency CPUs for compute-intensive workloads
+- **E-series**: Optimized for memory-intensive applications
+
+#### Generation Comparison
+```yaml
+# Prefer newer generations for better performance
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-version
+    operator: Gte
+    values: ["4"]  # v4 and above for better performance
+```
+
+### Memory Characteristics
+
+#### Memory-to-CPU Ratios
+- **D-series**: ~4GB RAM per vCPU
+- **E-series**: ~8GB RAM per vCPU  
+- **F-series**: ~2GB RAM per vCPU
+- **M-series**: ~28GB+ RAM per vCPU
+
+```yaml
+# For memory-intensive workloads
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-memory
+    operator: Gte
+    values: ["32Gi"]
+  - key: karpenter.azure.com/sku-family
+    operator: In
+    values: ["E", "M"]
+```
+
+### Storage Performance
+
+#### Storage Types
+- **Standard**: Standard HDD storage
+- **Premium**: Premium SSD storage (s suffix)
+- **Ultra**: Ultra disk capable
+
+```yaml
+# Require Premium SSD support
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_D4s_v5", "Standard_E4s_v5"]  # 's' suffix
+```
+
+### Network Performance
+
+#### Network Tiers
+- **Basic**: Up to 2 Gbps
+- **Standard**: Up to 10 Gbps  
+- **Premium**: Up to 25+ Gbps
+
+```yaml
+# For high network throughput
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-networking
+    operator: In
+    values: ["premium", "standard"]
+```
+
+## Cost Optimization
+
+### Spot Instance Usage
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: spot-optimized
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot"]
+      # Use diverse instance types for better spot availability
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["D", "E", "F"]
+      - key: karpenter.azure.com/sku-version
+        operator: Gte
+        values: ["3"]
+```
+
+### Right-Sizing Strategies
+
+#### CPU-Optimized Workloads
+```yaml
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["F"]  # High CPU-to-memory ratio
+      - key: karpenter.azure.com/sku-cpu
+        operator: In
+        values: ["4", "8", "16"]
+```
+
+#### Memory-Optimized Workloads
+```yaml
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["E"]  # High memory-to-CPU ratio
+      - key: karpenter.azure.com/sku-memory
+        operator: Gte
+        values: ["32Gi"]
+```
+
+## Specialized Workloads
+
+### GPU Workloads
+
+#### Machine Learning Training
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: ml-training
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: gpu-nodeclass
+      requirements:
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["N"]
+      - key: karpenter.azure.com/sku-name
+        operator: In
+        values: ["Standard_NC24s_v3"]  # 4x Tesla V100
+      taints:
+      - key: nvidia.com/gpu
+        value: "true"
+        effect: NoSchedule
+```
+
+#### Inference Workloads
+```yaml
+spec:
+  requirements:
+  - key: karpenter.azure.com/sku-name
+    operator: In
+    values: ["Standard_NC4as_T4_v3"]  # Tesla T4 for inference
+```
+
+### High-Performance Computing
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: hpc
+spec:
+  template:
+    spec:
+      requirements:
+      # HPC-optimized sizes with SR-IOV
+      - key: karpenter.azure.com/sku-name
+        operator: In
+        values: 
+        - "Standard_HB120rs_v3"  # AMD EPYC for HPC
+        - "Standard_HC44rs"      # Intel for HPC
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["on-demand"]  # Consistent performance
+```
+
+## Regional Availability
+
+### Check VM Availability
+
+```bash
+# List available VM sizes in a region
+az vm list-sizes --location eastus --output table
+
+# Check specific VM family availability
+az vm list-skus --location eastus --size Standard_D --output table
+```
+
+### Multi-Region Strategy
+
+```yaml
+# Use different VM families in different regions
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: multi-region
+spec:
+  template:
+    spec:
+      requirements:
+      - key: topology.kubernetes.io/zone
+        operator: In
+        values: ["eastus-1", "eastus-2", "eastus-3"]
+      # Flexible VM selection
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["D", "E"]
+      - key: karpenter.azure.com/sku-version
+        operator: Gte
+        values: ["4"]
+```
+
+## Best Practices
+
+### Selection Guidelines
+
+1. **Start Broad**: Begin with family-level selection, then narrow down
+2. **Use Latest Generations**: Prefer v4, v5 for better price/performance
+3. **Mixed Instance Types**: Use multiple families for better availability
+4. **Test Performance**: Validate performance characteristics for your workloads
+
+### Performance Testing
+
+```yaml
+# Performance testing NodePool
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: performance-test
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.azure.com/sku-name
+        operator: In
+        values: ["Standard_D8s_v5"]  # Specific size for testing
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: test-nodeclass
+```
+
+### Cost Monitoring
+
+```bash
+# Monitor VM costs
+az consumption usage list \
+  --start-date 2023-01-01 \
+  --end-date 2023-01-31 \
+  --query "[?instanceName=='Standard_D4s_v5']"
+```
+
+## Common Configurations
+
+### Balanced General Purpose
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: general-purpose
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["D"]
+      - key: karpenter.azure.com/sku-version
+        operator: Gte
+        values: ["4"]
+      - key: karpenter.azure.com/sku-cpu
+        operator: In
+        values: ["2", "4", "8"]
+```
+
+### Cost-Optimized
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cost-optimized
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot"]
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["B", "D"]  # Include burstable for cost savings
+      - key: karpenter.azure.com/sku-version
+        operator: Gte
+        values: ["3"]
+```
+
+### High-Performance
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: high-performance
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["on-demand"]
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["F", "E"]  # Compute or memory optimized
+      - key: karpenter.azure.com/sku-version
+        operator: In
+        values: ["5"]  # Latest generation
+```
