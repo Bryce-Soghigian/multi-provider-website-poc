@@ -1,0 +1,396 @@
+---
+title: "Scheduling"
+sidebar_position: 3
+description: Learn about scheduling workloads with Karpenter
+---
+
+import ProviderContent from '@site/src/components/ProviderContent/ProviderContent';
+import ProviderVariable from '@site/src/components/ProviderVariable/ProviderVariable';
+
+If your pods have no requirements for how or where to run, you can let Karpenter choose nodes from the full range of available cloud provider resources. However, by taking advantage of Karpenter's model of layered constraints, you can be sure that the precise type and amount of resources needed are available to your pods.
+
+Reasons for constraining where your pods run could include:
+
+* Needing to run in zones where dependent applications or storage are available
+* Requiring certain kinds of processors or other hardware
+* Wanting to use techniques like topology spread to help ensure high availability
+
+Your Cloud Provider defines the first layer of constraints, including all instance types, architectures, zones, and purchase types available to its cloud. The cluster administrator adds the next layer of constraints by creating one or more NodePools. The final layer comes from you adding specifications to your Kubernetes pod deployments.
+
+Pod scheduling constraints must fall within a NodePool's constraints or the pods will not deploy. For example, if the NodePool sets limits that allow only a particular zone to be used, and a pod asks for a different zone, it will not be scheduled.
+
+Constraints you can request include:
+
+* **Resource requests**: Request that certain amount of memory or CPU be available.
+* **Node selection**: Choose to run on a node that has a particular label (`nodeSelector`).
+* **Node affinity**: Draws a pod to run on nodes with particular attributes (affinity).
+* **Topology spread**: Use topology spread to help ensure availability of the application.
+* **Pod affinity/anti-affinity**: Draws pods towards or away from topology domains based on the scheduling of other pods.
+
+Karpenter supports standard Kubernetes scheduling constraints. This allows you to define a single set of rules that apply to both existing and provisioned capacity.
+
+:::note
+Karpenter supports specific [Well-Known Labels, Annotations and Taints](https://kubernetes.io/docs/reference/labels-annotations-taints/) that are useful for scheduling.
+:::
+
+## Resource Requests
+
+Within a Pod spec, you can both make requests and set limits on resources a pod needs, such as CPU and memory. For example:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  containers:
+  - name: app
+    image: nginx
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+```
+
+When Karpenter sees this pod, it will launch a node that has at least 64Mi of memory available and 250m of CPU available for this pod to use.
+
+## Node Selection
+
+The `nodeSelector` field allows you to constrain a pod to only run on particular nodes. For example:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    karpenter.sh/capacity-type: spot
+  containers:
+  - name: app
+    image: nginx
+```
+
+This pod will only run on nodes that have both the `kubernetes.io/arch=amd64` and `karpenter.sh/capacity-type=spot` labels.
+
+## Node Affinity
+
+Node affinity is conceptually similar to `nodeSelector` but allows for more expressive constraints. There are two types of node affinity:
+
+### Required Node Affinity
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+            - amd64
+            - arm64
+  containers:
+  - name: app
+    image: nginx
+```
+
+### Preferred Node Affinity
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+spec:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: karpenter.sh/capacity-type
+            operator: In
+            values:
+            - spot
+  containers:
+  - name: app
+    image: nginx
+```
+
+## Topology Spread Constraints
+
+Topology spread constraints allow you to control how pods are spread across your cluster among failure-domains such as regions, zones, nodes, and other user-defined topology domains.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: myapp
+      containers:
+      - name: app
+        image: nginx
+```
+
+This ensures that pods are spread evenly across availability zones.
+
+## Pod Affinity and Anti-Affinity
+
+Pod affinity and anti-affinity allow you to constrain which nodes your pod is eligible to be scheduled based on labels on pods that are already running on the node.
+
+### Pod Affinity
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - cache
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: web-app
+    image: nginx
+```
+
+This pod will be scheduled on nodes that already have pods with the label `app=cache`.
+
+### Pod Anti-Affinity
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+spec:
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - web-frontend
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: web-app
+    image: nginx
+```
+
+This ensures that no two pods with the label `app=web-frontend` are scheduled on the same node.
+
+## Well-Known Labels
+
+Kubernetes defines several well-known labels that cloud providers implement. Karpenter supports additional provider-specific labels for more advanced scheduling.
+
+### Standard Kubernetes Labels
+
+- `kubernetes.io/arch` - CPU architecture (amd64, arm64)
+- `kubernetes.io/os` - Operating system (linux, windows)
+- `node.kubernetes.io/instance-type` - Instance type
+- `topology.kubernetes.io/zone` - Availability zone
+
+### Karpenter Labels
+
+- `karpenter.sh/capacity-type` - Capacity type (spot, on-demand)
+- `karpenter.sh/nodepool` - NodePool name
+
+<ProviderContent providers={["azure"]}>
+### Azure-Specific Labels
+
+- `karpenter.azure.com/sku-family` - VM SKU family (D, E, F, etc.)
+- `karpenter.azure.com/sku-name` - VM SKU name (Standard_D2s_v3, etc.)
+- `karpenter.azure.com/sku-version` - VM SKU version
+- `karpenter.azure.com/sku-cpu` - Number of CPUs
+- `karpenter.azure.com/sku-memory` - Amount of memory
+- `karpenter.azure.com/sku-storage` - Local storage type
+- `karpenter.azure.com/sku-networking` - Network performance tier
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+### AWS-Specific Labels
+
+- `karpenter.k8s.aws/instance-category` - Instance category (c, m, r, etc.)
+- `karpenter.k8s.aws/instance-family` - Instance family (m5, c5, r5, etc.)
+- `karpenter.k8s.aws/instance-generation` - Instance generation (3, 4, 5, etc.)
+- `karpenter.k8s.aws/instance-size` - Instance size (large, xlarge, etc.)
+- `karpenter.k8s.aws/instance-hypervisor` - Hypervisor type (xen, nitro)
+- `karpenter.k8s.aws/instance-encryption-in-transit-supported` - Encryption support
+- `karpenter.k8s.aws/instance-local-nvme` - Local NVMe storage size
+</ProviderContent>
+
+## Weighted NodePools
+
+Karpenter allows you to express preferences for NodePools using a `weight` field. When multiple NodePools match a pod's requirements, Karpenter will prefer the NodePool with the highest weight.
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: preferred
+spec:
+  weight: 100
+  template:
+    spec:
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: fallback
+spec:
+  weight: 10
+  template:
+    spec:
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+```
+
+In this example, Karpenter will prefer to use spot instances from the "preferred" NodePool, but will fall back to on-demand instances from the "fallback" NodePool if spot capacity is unavailable.
+
+## Scheduling Examples
+
+### High-Performance Computing
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hpc-workload
+spec:
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: karpenter.sh/capacity-type
+            operator: In
+            values: ["on-demand"]
+  resources:
+    requests:
+      cpu: "4"
+      memory: "16Gi"
+```
+
+### GPU Workloads
+
+<ProviderContent providers={["azure"]}>
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-workload
+spec:
+  nodeSelector:
+    karpenter.azure.com/sku-family: "N"
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  resources:
+    requests:
+      nvidia.com/gpu: 1
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-workload
+spec:
+  nodeSelector:
+    karpenter.k8s.aws/instance-category: "g"
+  tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  resources:
+    requests:
+      nvidia.com/gpu: 1
+```
+</ProviderContent>
+
+### Multi-Zone Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web-app
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: web-app
+      containers:
+      - name: web
+        image: nginx
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+```
+
+This deployment ensures that pods are spread across both zones and nodes for high availability.

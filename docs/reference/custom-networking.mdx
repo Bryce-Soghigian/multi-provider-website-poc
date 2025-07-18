@@ -1,0 +1,469 @@
+---
+title: "Custom Networking"
+sidebar_position: 2
+description: Configure custom networking for Karpenter on Azure
+---
+
+This guide covers advanced networking configurations for Karpenter on Azure, including custom VNet setup, subnet management, and network security groups.
+
+## Overview
+
+Karpenter for Azure integrates with Azure Virtual Networks (VNets) to provision nodes in the correct network segments. By default, Karpenter uses the same networking configuration as your AKS cluster, but you can customize this for advanced scenarios.
+
+## VNet and Subnet Configuration
+
+### Default Behavior
+
+By default, Karpenter uses:
+- The same VNet as your AKS cluster
+- The same subnet as your existing node pools
+- Automatic subnet selection based on availability
+
+### Custom Subnet Configuration
+
+You can specify custom subnets in your AKSNodeClass:
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: custom-networking
+spec:
+  # Specify a custom subnet
+  vnetSubnetID: "/subscriptions/12345678-1234-1234-1234-123456789012/resourceGroups/my-rg/providers/Microsoft.Network/virtualNetworks/my-vnet/subnets/karpenter-subnet"
+  
+  # Other configuration
+  imageFamily: Ubuntu2204
+  osDiskSizeGB: 128
+```
+
+### Multi-Subnet Setup
+
+For high availability across multiple subnets:
+
+```yaml
+# NodePool 1 - Subnet A
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: subnet-a
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: nodeclass-subnet-a
+      requirements:
+      - key: topology.kubernetes.io/zone
+        operator: In
+        values: ["eastus-1"]
+---
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: nodeclass-subnet-a
+spec:
+  vnetSubnetID: "/subscriptions/.../subnets/subnet-a"
+  imageFamily: Ubuntu2204
+
+---
+# NodePool 2 - Subnet B  
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: subnet-b
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.azure.com/v1beta1
+        kind: AKSNodeClass
+        name: nodeclass-subnet-b
+      requirements:
+      - key: topology.kubernetes.io/zone
+        operator: In
+        values: ["eastus-2"]
+---
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: nodeclass-subnet-b
+spec:
+  vnetSubnetID: "/subscriptions/.../subnets/subnet-b"
+  imageFamily: Ubuntu2204
+```
+
+## Network Security Groups (NSGs)
+
+### Default NSG Rules
+
+Karpenter nodes automatically inherit NSG rules from your AKS cluster. The following rules are typically required:
+
+```bash
+# Allow inbound SSH (if needed)
+az network nsg rule create \
+  --resource-group myResourceGroup \
+  --nsg-name myNSG \
+  --name AllowSSH \
+  --protocol Tcp \
+  --priority 1000 \
+  --destination-port-range 22 \
+  --access Allow
+
+# Allow Kubernetes API server communication
+az network nsg rule create \
+  --resource-group myResourceGroup \
+  --nsg-name myNSG \
+  --name AllowKubeAPI \
+  --protocol Tcp \
+  --priority 1001 \
+  --destination-port-range 443 \
+  --access Allow
+
+# Allow pod-to-pod communication
+az network nsg rule create \
+  --resource-group myResourceGroup \
+  --nsg-name myNSG \
+  --name AllowPodToPod \
+  --protocol "*" \
+  --priority 1002 \
+  --source-address-prefix VirtualNetwork \
+  --destination-address-prefix VirtualNetwork \
+  --access Allow
+```
+
+### Custom NSG Configuration
+
+For advanced security requirements:
+
+```bash
+# Create custom NSG for Karpenter nodes
+az network nsg create \
+  --resource-group myResourceGroup \
+  --name karpenter-nsg
+
+# Allow only required traffic
+az network nsg rule create \
+  --resource-group myResourceGroup \
+  --nsg-name karpenter-nsg \
+  --name DenyAllInbound \
+  --protocol "*" \
+  --priority 4000 \
+  --access Deny
+
+# Associate NSG with subnet
+az network vnet subnet update \
+  --resource-group myResourceGroup \
+  --vnet-name myVNet \
+  --name karpenter-subnet \
+  --network-security-group karpenter-nsg
+```
+
+## Load Balancer Integration
+
+### Azure Load Balancer
+
+Karpenter nodes automatically join the AKS load balancer backend pool:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+  annotations:
+    # Use Azure Load Balancer
+    service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: my-app
+```
+
+### Application Gateway Integration
+
+For Application Gateway integration:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+  annotations:
+    # Application Gateway annotations
+    appgw.ingress.kubernetes.io/backend-path-prefix: "/"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: my-app
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-app-ingress
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+spec:
+  rules:
+  - host: myapp.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: my-app-service
+            port:
+              number: 80
+```
+
+## Private Clusters
+
+### Configuration for Private AKS
+
+For private AKS clusters, ensure Karpenter can communicate with the API server:
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: private-cluster
+spec:
+  # Use private subnet
+  vnetSubnetID: "/subscriptions/.../subnets/private-subnet"
+  
+  # Ensure nodes can reach private API server
+  imageFamily: Ubuntu2204
+  
+  # Custom user data for private cluster
+  userData: |
+    #!/bin/bash
+    # Configure private DNS if needed
+    echo "nameserver 168.63.129.16" >> /etc/resolv.conf
+```
+
+### DNS Configuration
+
+For private clusters with custom DNS:
+
+```bash
+# Create private DNS zone
+az network private-dns zone create \
+  --resource-group myResourceGroup \
+  --name privatelink.eastus.azmk8s.io
+
+# Link DNS zone to VNet
+az network private-dns link vnet create \
+  --resource-group myResourceGroup \
+  --zone-name privatelink.eastus.azmk8s.io \
+  --name myVNetLink \
+  --virtual-network myVNet \
+  --registration-enabled false
+```
+
+## CNI Integration
+
+### Azure CNI
+
+For Azure CNI, Karpenter automatically configures networking:
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: azure-cni
+spec:
+  # Azure CNI automatically assigns IP addresses
+  vnetSubnetID: "/subscriptions/.../subnets/azure-cni-subnet"
+  imageFamily: Ubuntu2204
+  
+  # Ensure sufficient IP addresses in subnet
+  maxPods: 30  # Adjust based on subnet size
+```
+
+### CNI Subnet Sizing
+
+Calculate subnet size for Azure CNI:
+
+```bash
+# For 100 nodes with 30 pods each
+# Required IPs: 100 nodes + (100 * 30 pods) = 3,100 IPs
+# Recommended subnet: /20 (4,096 IPs) for growth
+
+az network vnet subnet create \
+  --resource-group myResourceGroup \
+  --vnet-name myVNet \
+  --name azure-cni-subnet \
+  --address-prefixes 10.1.0.0/20
+```
+
+### Kubenet Configuration
+
+For Kubenet (default CNI):
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: kubenet
+spec:
+  vnetSubnetID: "/subscriptions/.../subnets/kubenet-subnet"
+  imageFamily: Ubuntu2204
+  
+  # Kubenet uses pod CIDR for pod networking
+  maxPods: 110  # Higher pod density possible
+```
+
+## Network Policies
+
+### Azure Network Policy
+
+Enable Azure Network Policy for microsegmentation:
+
+```yaml
+# Example network policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+```
+
+### Calico Integration
+
+For Calico network policies:
+
+```bash
+# Enable Calico on AKS
+az aks create \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --network-plugin azure \
+  --network-policy calico \
+  --enable-node-autoprovision
+```
+
+## Monitoring and Troubleshooting
+
+### Network Monitoring
+
+Monitor network health:
+
+```bash
+# Check node network configuration
+kubectl get nodes -o wide
+
+# Verify pod networking
+kubectl get pods -o wide --all-namespaces
+
+# Check service endpoints
+kubectl get endpoints
+```
+
+### Common Issues
+
+#### IP Address Exhaustion
+
+```bash
+# Check available IPs in subnet
+az network vnet subnet show \
+  --resource-group myResourceGroup \
+  --vnet-name myVNet \
+  --name mySubnet \
+  --query "availableIpAddressCount"
+
+# Solution: Use larger subnet or multiple subnets
+```
+
+#### DNS Resolution Issues
+
+```bash
+# Test DNS from pod
+kubectl run test-pod --rm -it --image=busybox -- nslookup kubernetes.default
+
+# Check CoreDNS
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+```
+
+#### Load Balancer Connectivity
+
+```bash
+# Check service status
+kubectl get svc -o wide
+
+# Verify backend pool membership
+az network lb address-pool show \
+  --resource-group MC_myResourceGroup_myAKSCluster_eastus \
+  --lb-name kubernetes \
+  --name aksOutboundBackendPool
+```
+
+## Best Practices
+
+### Subnet Design
+
+1. **Separate Subnets**: Use dedicated subnets for Karpenter nodes
+2. **Size Appropriately**: Calculate required IP addresses including growth
+3. **Zone Distribution**: Spread subnets across availability zones
+4. **Network Segmentation**: Use NSGs for security boundaries
+
+### Security
+
+1. **Principle of Least Privilege**: Only allow required network access
+2. **Network Policies**: Implement pod-to-pod communication controls
+3. **Private Endpoints**: Use private endpoints for Azure services
+4. **Regular Audits**: Review and audit network configurations
+
+### Performance
+
+1. **Proximity**: Place nodes close to dependent services
+2. **Bandwidth**: Consider network performance requirements
+3. **Latency**: Minimize cross-zone traffic where possible
+4. **Load Distribution**: Use multiple subnets for load distribution
+
+## Example Configurations
+
+### Production Setup
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: production
+spec:
+  vnetSubnetID: "/subscriptions/.../subnets/prod-karpenter-subnet"
+  imageFamily: Ubuntu2204
+  osDiskSizeGB: 128
+  maxPods: 30
+  tags:
+    Environment: production
+    ManagedBy: karpenter
+```
+
+### Development Setup
+
+```yaml
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: development
+spec:
+  vnetSubnetID: "/subscriptions/.../subnets/dev-karpenter-subnet"
+  imageFamily: Ubuntu2204
+  osDiskSizeGB: 64
+  maxPods: 50
+  tags:
+    Environment: development
+    ManagedBy: karpenter
+```

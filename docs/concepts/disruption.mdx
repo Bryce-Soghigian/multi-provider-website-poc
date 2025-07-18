@@ -1,0 +1,382 @@
+---
+title: "Disruption"
+sidebar_position: 4
+description: Learn about how Karpenter manages node disruption and consolidation
+---
+
+import ProviderContent from '@site/src/components/ProviderContent/ProviderContent';
+
+Karpenter automatically manages node lifecycle to optimize cluster efficiency and cost. This includes provisioning new nodes when needed and removing nodes that are no longer required or have become inefficient.
+
+## Disruption Types
+
+Karpenter can disrupt nodes for several reasons:
+
+### Expiration
+
+Nodes can be configured to expire after a specified duration using the `expireAfter` field in the NodePool. This is useful for:
+
+- Implementing rolling updates
+- Ensuring nodes get the latest security patches
+- Preventing long-running nodes that may accumulate issues
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      expireAfter: 24h  # Expire nodes after 24 hours
+```
+
+### Drift
+
+Nodes are considered "drifted" when their actual configuration no longer matches the desired configuration defined in the NodePool or NodeClass. This can happen when:
+
+- The NodePool or NodeClass specification is updated
+- <ProviderContent providers={["azure"]}>The AKSNodeClass references a new image family</ProviderContent><ProviderContent providers={["aws"]}>The EC2NodeClass references a new AMI</ProviderContent>
+- Security groups or subnets are modified
+
+Karpenter automatically detects drift and replaces drifted nodes.
+
+### Consolidation
+
+Karpenter can consolidate nodes to reduce costs and improve resource utilization. This happens in two scenarios:
+
+#### Empty Node Consolidation
+
+Nodes that have no running pods (except system pods) are candidates for termination.
+
+#### Underutilized Node Consolidation
+
+Karpenter can replace multiple underutilized nodes with fewer, more appropriately sized nodes.
+
+## Consolidation Policies
+
+Configure consolidation behavior using the `consolidationPolicy` field:
+
+### WhenEmpty
+
+Only consolidate nodes that have no workload pods:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+```
+
+### WhenUnderutilized
+
+Consolidate any nodes that can be more efficiently utilized:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+```
+
+## Consolidation Timing
+
+Control when consolidation occurs using the `consolidateAfter` field:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m  # Wait 5 minutes before consolidating
+```
+
+You can disable consolidation entirely by setting `consolidateAfter: Never`.
+
+## Disruption Budgets
+
+Control the rate of disruption using budgets to prevent too many nodes from being disrupted simultaneously:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+    budgets:
+    # Allow disruption of up to 10% of nodes at once
+    - nodes: "10%"
+    # During business hours, don't disrupt any nodes
+    - schedule: "0 9 * * mon-fri"
+      duration: 8h
+      nodes: "0"
+    # Allow disruption of up to 5 nodes during weekends
+    - schedule: "0 0 * * sat-sun" 
+      duration: 48h
+      nodes: "5"
+```
+
+Budget fields:
+
+- **nodes**: Maximum number or percentage of nodes that can be disrupted
+- **schedule**: Cron expression for when the budget applies
+- **duration**: How long the budget remains active
+
+## Termination Grace Period
+
+Configure how long Karpenter waits for pods to terminate gracefully:
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      terminationGracePeriod: 30s
+```
+
+:::warning
+This setting takes precedence over a pod's `terminationGracePeriodSeconds` and bypasses PodDisruptionBudgets and the `karpenter.sh/do-not-disrupt` annotation.
+:::
+
+## Preventing Disruption
+
+You can prevent Karpenter from disrupting specific nodes or pods using annotations:
+
+### Node-level Protection
+
+```yaml
+apiVersion: v1
+kind: Node
+metadata:
+  annotations:
+    karpenter.sh/do-not-disrupt: "true"
+```
+
+### Pod-level Protection
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    karpenter.sh/do-not-disrupt: "true"
+spec:
+  containers:
+  - name: app
+    image: nginx
+```
+
+When a pod has this annotation, Karpenter will not disrupt the node it's running on.
+
+## Interruption Handling
+
+<ProviderContent providers={["azure"]}>
+Karpenter handles Azure Spot VM interruptions gracefully by:
+
+1. Receiving interruption notices from Azure
+2. Cordoning the node to prevent new pods from scheduling
+3. Draining pods with respect to PodDisruptionBudgets
+4. Allowing pods to terminate gracefully
+
+### Spot Instance Considerations
+
+When using Spot VMs:
+
+- Karpenter automatically handles interruption notices
+- Pods are gracefully drained when possible
+- New nodes are provisioned to replace interrupted capacity
+- Consider using multiple instance types to improve availability
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: spot-nodepool
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot"]
+      - key: karpenter.azure.com/sku-family
+        operator: In
+        values: ["D", "E", "F"]  # Multiple families for better availability
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+Karpenter handles EC2 Spot interruptions gracefully using AWS SQS interruption queues:
+
+1. Receiving interruption notices from AWS
+2. Cordoning the node to prevent new pods from scheduling  
+3. Draining pods with respect to PodDisruptionBudgets
+4. Allowing pods to terminate gracefully
+
+### Spot Instance Considerations
+
+When using Spot instances:
+
+- Configure an SQS interruption queue for faster interruption handling
+- Karpenter automatically handles 2-minute interruption notices
+- Pods are gracefully drained when possible
+- New nodes are provisioned to replace interrupted capacity
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: spot-nodepool
+spec:
+  template:
+    spec:
+      requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values: ["spot"]
+      - key: karpenter.k8s.aws/instance-category
+        operator: In
+        values: ["c", "m", "r"]  # Multiple categories for better availability
+```
+</ProviderContent>
+
+## Monitoring Disruption
+
+Monitor disruption events using:
+
+### Kubernetes Events
+
+```bash
+kubectl get events --field-selector reason=NodeTerminating
+```
+
+### Logs
+
+<ProviderContent providers={["azure"]}>
+```bash
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter
+```
+</ProviderContent>
+
+<ProviderContent providers={["aws"]}>
+```bash
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter
+```
+</ProviderContent>
+
+### Metrics
+
+Karpenter exposes several metrics related to disruption:
+
+- `karpenter_nodes_terminating` - Number of nodes being terminated
+- `karpenter_nodes_terminated_total` - Total nodes terminated
+- `karpenter_disruption_budgets_allowed_disruptions` - Allowed disruptions per budget
+
+## Best Practices
+
+### Application Resilience
+
+1. **Use PodDisruptionBudgets** to ensure minimum availability:
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: web-app-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: web-app
+```
+
+2. **Handle SIGTERM gracefully** in your applications
+3. **Use health checks** to ensure pods are ready before serving traffic
+
+### NodePool Configuration
+
+1. **Set appropriate expiration times** based on your update requirements
+2. **Use consolidation policies** that match your cost and performance needs
+3. **Configure disruption budgets** to control the rate of change
+4. **Test disruption scenarios** in non-production environments
+
+### Monitoring and Alerting
+
+1. **Monitor disruption rates** to ensure they meet your expectations
+2. **Alert on excessive disruption** that might indicate issues
+3. **Track cost savings** from consolidation activities
+
+## Examples
+
+### Production Workload
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: production
+spec:
+  template:
+    spec:
+      expireAfter: 720h  # 30 days
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+    budgets:
+    # Limit disruption during business hours
+    - schedule: "0 9 * * mon-fri"
+      duration: 8h
+      nodes: "5%"
+    # Allow more aggressive consolidation at night
+    - schedule: "0 18 * * *"
+      duration: 12h
+      nodes: "20%"
+```
+
+### Development Environment
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: development
+spec:
+  template:
+    spec:
+      expireAfter: 8h  # Short expiration for dev
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s  # Quick consolidation
+```
+
+### Batch Processing
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: batch
+spec:
+  template:
+    spec:
+      expireAfter: 24h
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 0s  # Immediate consolidation when empty
+    budgets:
+    - nodes: "100%"  # Allow all nodes to be disrupted
+```

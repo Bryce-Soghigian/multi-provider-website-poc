@@ -1,0 +1,379 @@
+---
+title: "Upgrade Guide"
+sidebar_position: 1
+description: Guide for upgrading Karpenter on AWS
+---
+
+This guide provides instructions for upgrading Karpenter installations on AWS EKS. Always review the [compatibility matrix](./compatibility) before upgrading and test upgrades in non-production environments first.
+
+## Before You Upgrade
+
+### 1. Review Breaking Changes
+
+Check the [Karpenter releases page](https://github.com/aws/karpenter-provider-aws/releases) for breaking changes and migration steps specific to your target version.
+
+### 2. Backup Current Configuration
+
+```bash
+# Backup NodePools
+kubectl get nodepool -o yaml > nodepool-backup.yaml
+
+# Backup EC2NodeClasses  
+kubectl get ec2nodeclass -o yaml > ec2nodeclass-backup.yaml
+
+# Backup Karpenter configuration
+helm get values karpenter -n karpenter > karpenter-values-backup.yaml
+```
+
+### 3. Check Compatibility
+
+Ensure your target Karpenter version is compatible with your:
+- Kubernetes version
+- EKS version
+- AWS Load Balancer Controller version (if used)
+- Other cluster addons
+
+## Upgrade Methods
+
+### Method 1: Helm Upgrade (Recommended)
+
+```bash
+# Update Helm repository
+helm repo update
+
+# Check available versions
+helm search repo karpenter --versions
+
+# Upgrade Karpenter
+helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version "v1.0.8" \
+  --namespace karpenter \
+  --reuse-values
+```
+
+### Method 2: kubectl Apply (GitOps)
+
+```bash
+# Download manifests for target version
+curl -fsSL "https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodeclaims.yaml" | kubectl apply -f -
+curl -fsSL "https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodepools.yaml" | kubectl apply -f -
+curl -fsSL "https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.k8s.aws_ec2nodeclasses.yaml" | kubectl apply -f -
+```
+
+## Version-Specific Upgrade Instructions
+
+### Upgrading to v1.0.x from v0.37.x
+
+This is a major version upgrade with significant API changes:
+
+#### 1. Update CRDs First
+
+```bash
+# Apply new CRDs
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodeclaims.yaml
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodepools.yaml
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.k8s.aws_ec2nodeclasses.yaml
+```
+
+#### 2. Migrate Provisioner to NodePool
+
+Convert your Provisioner resources to NodePools:
+
+```yaml
+# Old Provisioner (v0.37.x)
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: default
+spec:
+  requirements:
+    - key: karpenter.sh/capacity-type
+      operator: In
+      values: ["spot"]
+  limits:
+    resources:
+      cpu: 1000
+  providerRef:
+    name: default
+
+---
+# New NodePool (v1.0.x)
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+  limits:
+    cpu: 1000
+```
+
+#### 3. Migrate AWSNodePool to EC2NodeClass
+
+```yaml
+# Old AWSNodePool (v0.37.x)
+apiVersion: karpenter.k8s.aws/v1alpha1
+kind: AWSNodePool
+metadata:
+  name: default
+spec:
+  instanceProfile: KarpenterNodeInstanceProfile-my-cluster
+  amiFamily: AL2
+
+---
+# New EC2NodeClass (v1.0.x)
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  instanceProfile: KarpenterNodeInstanceProfile-my-cluster
+  amiFamily: AL2
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "my-cluster"
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "my-cluster"
+```
+
+### Upgrading to v0.37.x from v0.32.x
+
+#### Update Settings
+
+```bash
+# Update Helm values for new settings format
+helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version "v0.37.0" \
+  --namespace karpenter \
+  --set "settings.clusterName=${CLUSTER_NAME}" \
+  --set "settings.interruptionQueue=${CLUSTER_NAME}"
+```
+
+## Post-Upgrade Steps
+
+### 1. Verify Installation
+
+```bash
+# Check Karpenter pods
+kubectl get pods -n karpenter
+
+# Verify CRDs are updated
+kubectl get crd | grep karpenter
+
+# Check controller logs
+kubectl logs -n karpenter -l app.kubernetes.io/name=karpenter
+```
+
+### 2. Validate NodePools
+
+```bash
+# Check NodePool status
+kubectl get nodepool
+
+# Verify node provisioning works
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: test
+        image: nginx
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+EOF
+```
+
+### 3. Clean Up Old Resources
+
+After confirming the upgrade is successful:
+
+```bash
+# Remove old Provisioner resources (if upgrading from v0.37.x)
+kubectl delete provisioner --all
+
+# Remove old AWSNodePool resources (if upgrading from v0.37.x)  
+kubectl delete awsnodepool --all
+
+# Clean up old CRDs (be careful!)
+kubectl delete crd provisioners.karpenter.sh
+kubectl delete crd awsnodepools.karpenter.k8s.aws
+```
+
+## Rollback Procedures
+
+If you encounter issues after upgrading:
+
+### 1. Rollback Helm Installation
+
+```bash
+# List Helm history
+helm history karpenter -n karpenter
+
+# Rollback to previous version
+helm rollback karpenter <REVISION> -n karpenter
+```
+
+### 2. Restore Configurations
+
+```bash
+# Restore backed up configurations
+kubectl apply -f nodepool-backup.yaml
+kubectl apply -f ec2nodeclass-backup.yaml
+```
+
+### 3. Force Rollback
+
+If Helm rollback fails:
+
+```bash
+# Uninstall current version
+helm uninstall karpenter -n karpenter
+
+# Reinstall previous version
+helm install karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version "v0.37.0" \
+  --namespace karpenter \
+  --values karpenter-values-backup.yaml
+```
+
+## Troubleshooting Common Issues
+
+### CRD Validation Errors
+
+If you see CRD validation errors:
+
+```bash
+# Remove old CRDs and reinstall
+kubectl delete crd nodeclaims.karpenter.sh
+kubectl delete crd nodepools.karpenter.sh
+kubectl delete crd ec2nodeclasses.karpenter.k8s.aws
+
+# Apply new CRDs
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodeclaims.yaml
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.sh_nodepools.yaml
+kubectl apply -f https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/pkg/apis/crds/karpenter.k8s.aws_ec2nodeclasses.yaml
+```
+
+### Pod Scheduling Issues
+
+If pods aren't being scheduled after upgrade:
+
+```bash
+# Check NodePool status
+kubectl describe nodepool
+
+# Check for scheduling events
+kubectl get events --sort-by='.lastTimestamp' | grep -i nodepool
+
+# Verify EC2NodeClass configuration
+kubectl describe ec2nodeclass
+```
+
+### Permission Issues
+
+If you see permission errors:
+
+```bash
+# Update IAM policies for the new version
+curl -fsSL https://raw.githubusercontent.com/aws/karpenter-provider-aws/v1.0.8/website/content/en/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml > /tmp/karpenter-policies.yaml
+
+aws cloudformation deploy \
+  --stack-name "Karpenter-${CLUSTER_NAME}" \
+  --template-body "file:///tmp/karpenter-policies.yaml" \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides "ClusterName=${CLUSTER_NAME}"
+```
+
+## Best Practices
+
+1. **Test in Non-Production First**: Always test upgrades in development/staging environments
+2. **Read Release Notes**: Carefully review release notes for breaking changes
+3. **Backup Everything**: Backup all Karpenter resources before upgrading
+4. **Gradual Rollout**: Consider blue/green deployments for critical clusters
+5. **Monitor Closely**: Watch logs and metrics during and after upgrade
+6. **Have Rollback Plan**: Prepare rollback procedures before starting
+7. **Update Dependencies**: Ensure all related components are compatible
+
+## Automation
+
+### GitOps Upgrade
+
+```yaml
+# Example ArgoCD Application for Karpenter
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://charts.karpenter.sh'
+    targetRevision: v1.0.8
+    chart: karpenter
+    helm:
+      values: |
+        settings:
+          clusterName: my-cluster
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: karpenter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+### Automated Testing
+
+```bash
+#!/bin/bash
+# Upgrade test script
+
+set -e
+
+# Backup current state
+kubectl get nodepool -o yaml > nodepool-backup.yaml
+kubectl get ec2nodeclass -o yaml > ec2nodeclass-backup.yaml
+
+# Perform upgrade
+helm upgrade karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version "${TARGET_VERSION}" \
+  --namespace karpenter \
+  --reuse-values
+
+# Verify upgrade
+kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=karpenter -n karpenter --timeout=300s
+
+# Test node provisioning
+kubectl apply -f test-deployment.yaml
+kubectl wait --for=condition=Available deployment/test-deployment --timeout=600s
+
+# Cleanup test resources
+kubectl delete -f test-deployment.yaml
+
+echo "Upgrade to ${TARGET_VERSION} completed successfully!"
+```
